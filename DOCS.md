@@ -339,6 +339,50 @@ Suporte a sensibilidade de pressão e velocidade para tablets:
 - Eixo configurável (posição do eixo de simetria)
 - Vários eixos simultâneos possíveis
 
+### 5.7 Suavização de Traçado — Stabilizer (`app/tools/tool_loop_manager.cpp`, `app/tools/dynamics.h`)
+
+O **Stabilizer** (suavizador de traçado) suaviza o caminho desenhado pelo usuário enquanto ele usa qualquer ferramenta de desenho freehand — lápis, pincel, borracha, etc. — independente do tipo de brush selecionado.
+
+#### Como funciona
+
+A lógica está em `ToolLoopManager::movement()` (`src/app/tools/tool_loop_manager.cpp`). A cada evento de movimento do mouse ou caneta, **antes** de o ponto ser entregue ao controller/intertwiner, o Stabilizer intercepta a posição bruta e a substitui por uma posição suavizada:
+
+```
+posição_bruta  →  [Stabilizer]  →  posição_suavizada  →  controller  →  pixels desenhados
+```
+
+O algoritmo mantém internamente um **centro de estabilização** (`m_stabilizerCenter`, do tipo `gfx::PointF`) que representa a posição "atrasada" do cursor. A cada movimento:
+
+1. Calcula o vetor delta entre o cursor real e `m_stabilizerCenter`
+2. Calcula a distância euclidiana desse delta
+3. Move `m_stabilizerCenter` **apenas uma fração** dessa distância na direção do cursor, conforme o fator de suavização `stabilizerFactor` (quanto maior o fator, mais lento e suave o centro se desloca)
+4. O ponto entregue ao loop de desenho é `m_stabilizerCenter`, e não a posição real do cursor
+
+```cpp
+// Trecho simplificado de tool_loop_manager.cpp
+const double f = m_dynamics.stabilizerFactor;   // fator de suavidade
+const gfx::Point delta = pointer.point() - m_stabilizerCenter;
+const double distance = sqrt(delta.x² + delta.y²);
+const double angle    = atan2(delta.y, delta.x);
+newPoint = m_stabilizerCenter + (distance / f) * direction(angle);
+m_stabilizerCenter = newPoint;  // avança suavemente em direção ao cursor
+```
+
+O resultado é um traçado que "persegue" o cursor com inércia — curvas bruscas são suavizadas automaticamente, produzindo linhas mais fluidas.
+
+#### Configuração
+
+O Stabilizer é habilitado e ajustado pelo painel **Dynamics** (atalho: botão Dynamics na barra de contexto):
+
+- **Checkbox `Stabilizer`**: ativa/desativa a suavização. Ao marcar pela primeira vez, o fator é automaticamente definido como `16` como padrão.
+- **Slider `Stabilizer Factor`**: controla a intensidade da suavização. Valores maiores = traçado mais suave e mais "atrasado" em relação ao cursor. Zerar o slider equivale a desativar o Stabilizer.
+
+Os valores são persistidos por ferramenta nas preferências (`dynaPref.stabilizer()` / `dynaPref.stabilizerFactor()`).
+
+#### Desativação automática em modo linha (Shift)
+
+Ao pressionar **Shift** durante um traçado freehand para desenhar uma linha reta, o Stabilizer é desativado automaticamente via `DrawingState::disableMouseStabilizer()` → `ToolLoopManager::disableMouseStabilizer()`. Isso evita que a suavização distorça a prévia da linha reta que o usuário está posicionando.
+
 ---
 
 ## 6. Comandos e Operações (`src/app/commands`)
@@ -734,6 +778,7 @@ Muda dinamicamente dependendo da ferramenta ativa. Pode exibir:
 
 - Configuração de sensibilidade de pressão, velocidade e ângulo
 - Curvas de resposta para tamanho, opacidade e gradiente
+- **Stabilizer** (suavização de traçado): checkbox para ativar e slider de fator (0–infinito); controla diretamente o `DynamicsOptions::stabilizer` e `DynamicsOptions::stabilizerFactor` usados pelo `ToolLoopManager` (veja seção 5.7)
 
 ### 9.8 Diálogos de propriedades
 
